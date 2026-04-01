@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""
+OAuth Flow Testing Script for ECS MCP Server
+
+This script demonstrates the complete OAuth flow:
+1. Generate authorization URL
+2. Handle callback to get authorization code
+3. Exchange code for JWT tokens
+4. Use JWT token to call API Gateway endpoint
+"""
+
+import os
+import json
+
+import secrets
+import urllib.parse
+import webbrowser
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from threading import Thread, Event
+import time
+import requests
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+class CallbackHandler(BaseHTTPRequestHandler):
+    """HTTP server to handle OAuth callback"""
+    
+    def do_GET(self):
+        # Parse the callback URL
+        parsed_url = urllib.parse.urlparse(self.path)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        if 'code' in query_params:
+            # Store the authorization code
+            self.server.auth_code = query_params['code'][0]
+            self.server.callback_event.set()  # Signal that callback received
+            
+            # Send success response
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(b'''
+                <html>
+                <body>
+                    <h2>Authorization Successful!</h2>
+                    <p>You can close this window and return to the terminal.</p>
+                </body>
+                </html>
+            ''')
+        else:
+            # Handle error
+            error = query_params.get('error', ['Unknown error'])[0]
+            self.send_response(400)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(f'''
+                <html>
+                <body>
+                    <h2>Authorization Failed!</h2>
+                    <p>Error: {error}</p>
+                </body>
+                </html>
+            '''.encode())
+    
+    def log_message(self, format, *args):
+        # Suppress HTTP server logs
+        pass
+
+class OAuthTester:
+    def __init__(self):
+        self.region = os.getenv('COGNITO_REGION', 'us-west-2')
+        self.user_pool_id = os.getenv('COGNITO_USER_POOL_ID')
+        self.client_id = os.getenv('COGNITO_CLIENT_ID')
+        self.client_secret = os.getenv('COGNITO_CLIENT_SECRET')
+        self.api_gateway_url = os.getenv('API_GATEWAY_URL')
+        self.stack_name = os.getenv('STACK_NAME', 'maths-mcp-ecs')
+        
+        # OAuth endpoints
+        self.cognito_domain = f"{self.stack_name}-auth.auth.{self.region}.amazoncognito.com"
+        self.authorize_url = f"https://{self.cognito_domain}/oauth2/authorize"
+        self.token_url = f"https://{self.cognito_domain}/oauth2/token"
+        
+        # Callback server
+        self.callback_port = 8080
+        self.redirect_uri = f"http://localhost:{self.callback_port}/callback"
+        
+        print(f"🔧 Configuration:")
+        print(f"   User Pool ID: {self.user_pool_id}")
+        print(f"   Client ID: {self.client_id}")
+        print(f"   Cognito Domain: {self.cognito_domain}")
+        print(f"   API Gateway URL: {self.api_gateway_url}")
+        print()
+
+
+
+    def start_authorization_flow(self):
+        """Step 1: Generate authorization URL and open browser"""
+        print("🚀 Step 1: Starting OAuth Authorization Flow")
+        
+        # Generate state parameter for security
+        state = secrets.token_urlsafe(32)
+        
+        # Build authorization URL (no PKCE)
+        auth_params = {
+            'response_type': 'code',
+            'client_id': self.client_id,
+            'redirect_uri': self.redirect_uri,
+            'scope': 'openid email profile',
+            'state': state
+        }
+        
+        auth_url = f"{self.authorize_url}?" + urllib.parse.urlencode(auth_params)
+        
+        print(f"📋 Authorization URL: {auth_url}")
+        print()
+        print("🌐 Opening browser for authorization...")
+        
+        # Open browser
+        webbrowser.open(auth_url)
+        
+        return state
+
+    def wait_for_callback(self):
+        """Step 2: Start callback server and wait for authorization code"""
+        print(f"⏳ Step 2: Waiting for callback on http://localhost:{self.callback_port}/callback")
+        
+        # Start HTTP server for callback
+        server = HTTPServer(('localhost', self.callback_port), CallbackHandler)
+        server.auth_code = None
+        server.callback_event = Event()
+        
+        # Start server in background thread
+        server_thread = Thread(target=server.serve_forever)
+        server_thread.daemon = True
+        server_thread.start()
+        
+        # Wait for authorization code with timeout
+        timeout = 120  # 2 minutes
+        if not server.callback_event.wait(timeout=timeout):
+            server.shutdown()
+            raise Exception("Timeout waiting for authorization code")
+        
+        server.shutdown()
+        print(f"✅ Received authorization code: {server.auth_code[:20]}...")
+        return server.auth_code
+
+    def exchange_code_for_tokens(self, auth_code):
+        """Step 3: Exchange authorization code for JWT tokens"""
+        print("🔄 Step 3: Exchanging authorization code for tokens")
+        
+        # Prepare token request (no PKCE)
+        token_data = {
+            'grant_type': 'authorization_code',
+            'client_id': self.client_id,
+            'code': auth_code,
+            'redirect_uri': self.redirect_uri
+        }
+        
+        # Add client secret if available
+        if self.client_secret:
+            token_data['client_secret'] = self.client_secret
+        
+        # Make token request
+        response = requests.post(
+            self.token_url,
+            data=token_data,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'},
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        if response.status_code != 200:
+            print(f"❌ Token exchange failed: {response.status_code}")
+            print(f"Response: {response.text}")
+            raise Exception(f"Token exchange failed: {response.text}")
+        
+        tokens = response.json()
+        
+        print("✅ Successfully obtained tokens:")
+        print(f"   Access Token: {tokens['access_token'][:50]}...")
+        print(f"   ID Token: {tokens['id_token'][:50]}...")
+        print(f"   Token Type: {tokens['token_type']}")
+        print(f"   Expires In: {tokens['expires_in']} seconds")
+        print()
+        
+        return tokens
+
+    def test_api_gateway(self, tokens):
+        """Step 4: Test API Gateway endpoint with JWT token"""
+        print("🧪 Step 4: Testing API Gateway with JWT token")
+        
+        # Test MCP endpoint
+        mcp_url = f"{self.api_gateway_url}/mcp"
+        
+        # Use ID token for API Gateway (contains user info)
+        headers = {
+            'Authorization': f"Bearer {tokens['id_token']}",
+            'Content-Type': 'application/json'
+        }
+        
+        # MCP request payload
+        mcp_request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list"
+        }
+        
+        print(f"📡 Making request to: {mcp_url}")
+        print(f"🔑 Using ID token: {tokens['id_token'][:50]}...")
+        
+        try:
+            response = requests.post(mcp_url, json=mcp_request, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            print(f"📊 Response Status: {response.status_code}")
+            print(f"📋 Response Headers: {dict(response.headers)}")
+            
+            if response.status_code == 200:
+                print("✅ API Gateway request successful!")
+                result = response.json()
+                print(f"📄 Response: {json.dumps(result, indent=2)}")
+            else:
+                print(f"❌ API Gateway request failed: {response.status_code}")
+                print(f"Response: {response.text}")
+                
+        except Exception as e:
+            print(f"❌ Request failed: {str(e)}")
+
+    def test_health_endpoint(self):
+        """Test health endpoint (no auth required)"""
+        print("🏥 Testing health endpoint (no auth)")
+        
+        health_url = f"{self.api_gateway_url}/health"
+        
+        try:
+            response = requests.get(health_url, timeout=10)
+            response.raise_for_status()
+            print(f"📊 Health Status: {response.status_code}")
+            if response.status_code == 200:
+                print("✅ Health check successful!")
+                print(f"📄 Response: {response.text}")
+            else:
+                print(f"❌ Health check failed: {response.text}")
+        except Exception as e:
+            print(f"❌ Health check failed: {str(e)}")
+        
+        print()
+
+    def run_complete_flow(self):
+        """Run the complete OAuth flow"""
+        print("🎯 OAuth Flow Testing for ECS MCP Server")
+        print("=" * 50)
+        
+        try:
+            # Test health endpoint first
+            self.test_health_endpoint()
+            
+            # Step 1: Start authorization flow
+            state = self.start_authorization_flow()
+            
+            # Step 2: Wait for callback
+            auth_code = self.wait_for_callback()
+            
+            # Step 3: Exchange code for tokens
+            tokens = self.exchange_code_for_tokens(auth_code)
+            
+            # Step 4: Test API Gateway
+            self.test_api_gateway(tokens)
+            
+            print("\n🎉 OAuth flow completed successfully!")
+            
+        except Exception as e:
+            print(f"\n❌ OAuth flow failed: {str(e)}")
+            return False
+        
+        return True
+
+def main():
+    """Main function"""
+    tester = OAuthTester()
+    success = tester.run_complete_flow()
+    
+    if success:
+        print("\n✅ All tests passed!")
+    else:
+        print("\n❌ Some tests failed!")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
