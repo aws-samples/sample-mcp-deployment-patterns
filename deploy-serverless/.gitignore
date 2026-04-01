@@ -1,0 +1,24 @@
+# Environment variables
+.env
+
+# AWS deployment artifacts
+deployment-package.zip
+build/
+python/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store

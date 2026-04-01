@@ -1,0 +1,2 @@
+# No external dependencies needed for the lightweight MCP server
+# All functionality is implemented using Python standard library

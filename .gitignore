@@ -1,0 +1,43 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+
+# Environment files with sensitive credentials
+.env
+*.env
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Terraform/Infrastructure state files
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# CDK output
+cdk.out/
+
+# Credentials and secrets
+*credentials*
+*secret*
+*.pem
+*.key
+
+# Logs
+*.log

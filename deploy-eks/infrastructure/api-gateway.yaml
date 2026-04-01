@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'API Gateway with VPC Link for MCP Server'
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: VPC ID where the ALB is located
+    Default: vpc-0830458aef82a7347
+  
+  PrivateALBArn:
+    Type: String
+    Description: ARN of the private ALB to connect to
+  
+  PrivateALBListenerArn:
+    Type: String
+    Description: ARN of the private ALB listener
+  
+  PrivateSubnet1Id:
+    Type: String
+    Description: ID of the first private subnet
+  
+  PrivateSubnet2Id:
+    Type: String
+    Description: ID of the second private subnet
+  
+  ProjectName:
+    Type: String
+    Default: maths-mcp
+    Description: Project name for resource naming
+
+Resources:
+  # VPC Link for connecting API Gateway to private ALB
+  VPCLink:
+    Type: AWS::ApiGatewayV2::VpcLink
+    Properties:
+      Name: !Sub '${ProjectName}-vpc-link'
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      SecurityGroupIds:
+        - !Ref VPCLinkSecurityGroup
+      Tags:
+        Name: !Sub '${ProjectName}-vpc-link'
+        Project: !Ref ProjectName
+
+  # Security Group for VPC Link
+  VPCLinkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VPC Link
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 10.0.0.0/8
+          Description: Allow HTTP to private subnets
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/8
+          Description: Allow HTTPS to private subnets
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-vpc-link-sg'
+
+  # IAM Policy for MCP API access - following AWS documentation
+  McpApiAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy for accessing MCP API Gateway endpoints with SigV4
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - execute-api:Invoke
+            Resource:
+              - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/$default/POST/mcp'
+
+  # Note: Private subnets will be passed as parameters
+
+  # HTTP API Gateway (v2) with AWS IAM Authentication
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-api'
+      Description: API Gateway for MCP Server with SigV4 Authentication
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowCredentials: false
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Amz-Date
+          - X-Amz-Security-Token
+          - X-Amz-Content-Sha256
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowOrigins:
+          - '*'
+      Tags:
+        Name: !Sub '${ProjectName}-api'
+        Project: !Ref ProjectName
+
+
+
+  # Integration with private ALB via VPC Link
+  HttpIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Ref PrivateALBListenerArn
+      ConnectionType: VPC_LINK
+      ConnectionId: !Ref VPCLink
+      PayloadFormatVersion: '1.0'
+
+  # Health check route (no authentication for monitoring)
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /health'
+      Target: !Sub 'integrations/${HttpIntegration}'
+      AuthorizationType: NONE
+
+  # MCP endpoint route with IAM authorization
+  McpRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /mcp'
+      Target: !Sub 'integrations/${HttpIntegration}'
+      AuthorizationType: AWS_IAM
+
+  # CloudWatch Log Group for API Gateway access logs
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${ProjectName}'
+      RetentionInDays: 30
+
+  # Default stage
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+      Tags:
+        Name: !Sub '${ProjectName}-stage'
+        Project: !Ref ProjectName
+
+Outputs:
+  ApiGatewayUrl:
+    Description: API Gateway URL (requires SigV4 authentication)
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${ProjectName}-api-gateway-url'
+
+  VPCLinkId:
+    Description: VPC Link ID
+    Value: !Ref VPCLink
+    Export:
+      Name: !Sub '${ProjectName}-vpc-link-id'
+
+  ApiId:
+    Description: API Gateway ID
+    Value: !Ref HttpApi
+    Export:
+      Name: !Sub '${ProjectName}-api-id'
+
+  McpApiAccessPolicyArn:
+    Description: IAM Policy ARN for MCP API access
+    Value: !Ref McpApiAccessPolicy
+    Export:
+      Name: !Sub '${ProjectName}-mcp-api-access-policy-arn'
