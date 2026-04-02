@@ -1,6 +1,6 @@
-# MCP Maths Server - Multiple Deployment Methods
+# MCP Deployment Patterns on AWS using a sample maths MCP Server
 
-A Mathematics [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server demonstrating different deployment approaches on AWS with comprehensive authentication options.
+A sample MCP server demonstrating different deployment approaches on AWS with comprehensive authentication options.
 
 ## Table of Contents
 - [Overview](#overview)
