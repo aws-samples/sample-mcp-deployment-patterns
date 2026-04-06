@@ -22,18 +22,12 @@ A sample MCP server demonstrating different deployment approaches on AWS with co
 
 This project demonstrates different AWS deployment patterns for MCP servers:
 
-1. **[Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/) with [SigV4](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html)/IAM** - Production-ready with [AWS Identity and Access Management (IAM)](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html) authentication
+1. **[Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/) with [IAM SigV4](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-oauth.html)/IAM** - Production-ready with [AWS Identity and Access Management (IAM)](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html) authentication
 2. **Amazon Bedrock AgentCore with OAuth** - User-based authentication with [Amazon Cognito](https://docs.aws.amazon.com/cognito/latest/developerguide/what-is-amazon-cognito.html) JWT tokens
 3. **Serverless [AWS Lambda](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html)** - Cost-effective auto-scaling deployment
 4. **[Amazon Elastic Container Service (ECS)](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/Welcome.html) Container** - Containerized deployment with Application Load Balancer
 5. **[Amazon Elastic Kubernetes Service (EKS)](https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html) Kubernetes** - Kubernetes deployment with [Amazon API Gateway](https://docs.aws.amazon.com/apigateway/latest/developerguide/welcome.html) and SigV4 authentication
 
-**Key Features:**
-- ✅ No hardcoded credentials - all configuration via `.env` files
-- ✅ Multiple authentication methods (IAM, OAuth, Cognito)
-- ✅ Easy testing with MCP Inspector
-- ✅ Production-ready deployment scripts
-- ✅ Comprehensive documentation
 
 ---
 
@@ -41,7 +35,7 @@ This project demonstrates different AWS deployment patterns for MCP servers:
 
 ```
 maths/
-├── deploy-agentcore-iam/          # AgentCore deployment with SigV4/IAM auth
+├── deploy-agentcore-iam/          # AgentCore deployment with IAM Sigv4 Authentication
 │   ├── .env                   # Configuration (gitignored)
 │   ├── .env.example           # Template for configuration
 │   ├── infrastructure/        # Deployment scripts
@@ -68,8 +62,8 @@ maths/
 │   ├── infrastructure/        # CloudFormation + deployment scripts
 │   └── src/                   # Lambda function + MCP server
 └── mcp-inspector/             # Testing tools for all deployments
-    ├── agentcore-proxy-sigv4.py       # Test AgentCore with SigV4
-    ├── agentcore-proxy-oauth.py       # Test AgentCore with OAuth
+    ├── agentcore-proxy-sigv4.py       # Test AgentCore with IAM SigV4
+    ├── agentcore-proxy-oauth.py       # Test AgentCore with JWT Bearer Token
     └── serverless-proxy.py            # Test Serverless deployment
 ```
 
@@ -104,7 +98,7 @@ cp .env.example .env
 
 ## Deployment Methods
 
-### 1. Amazon Bedrock AgentCore with SigV4/IAM Authentication
+### 1. Amazon Bedrock AgentCore with IAM Sigv4Authentication
 
 **Use Case:** Production deployments with AWS IAM authentication
 
@@ -132,7 +126,7 @@ cd deploy-agentcore-iam/infrastructure
 
 **What happens:**
 - Loads configuration from `.env`
-- Uses AWS IAM credentials ([SigV4](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html) signing)
+- Uses AWS IAM credentials ([IAM SigV4](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-oauth.html) signing)
 - No JWT tokens needed
 - Deploys to Amazon Bedrock AgentCore
 
@@ -301,11 +295,11 @@ curl -X POST http://YOUR_ALB_URL/mcp \
 
 ### 5. Amazon EKS Kubernetes Deployment
 
-**Use Case:** Production Kubernetes deployment with Amazon API Gateway and [SigV4](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html) authentication
+**Use Case:** Production Kubernetes deployment with Amazon API Gateway and [SigV4](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-oauth.html) authentication
 
 **Architecture:**
 ```
-Internet → Amazon API Gateway (SigV4) → VPC Link → Internal ALB → EKS Pods (MCP Server)
+Internet → Amazon API Gateway (IAM SigV4) → VPC Link → Internal ALB → EKS Pods (MCP Server)
 ```
 
 **Configuration** (`deploy-eks/.env`):
@@ -344,7 +338,7 @@ cd deploy-eks/deployment
 **What happens:**
 - **Step 1**: Creates Amazon EKS cluster, [Amazon Virtual Private Cloud (VPC)](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html), and AWS Load Balancer Controller
 - **Step 2**: Builds Docker image, deploys to Kubernetes with internal ALB
-- **Step 3**: Creates Amazon API Gateway with VPC Link and SigV4 authentication
+- **Step 3**: Creates Amazon API Gateway with VPC Link and IAM SigV4 authentication
 
 **Test:**
 ```bash
@@ -355,13 +349,6 @@ curl https://YOUR_API_GATEWAY_URL/health
 cd deploy-eks/deployment
 python3 test-api.py
 ```
-
-**Security Features:**
-- ✅ Internal ALB only (no direct public access)
-- ✅ Amazon API Gateway with [SigV4](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html) authentication for MCP endpoints
-- ✅ Health endpoint accessible for monitoring
-- ✅ VPC Link for secure private connectivity
-- ✅ IAM policies for fine-grained access control
 
 **Cleanup:**
 ```bash
@@ -396,7 +383,7 @@ pip install mcp httpx boto3 python-dotenv botocore
 
 | Feature | AgentCore (SigV4) | AgentCore (OAuth) | ECS Container | EKS Kubernetes | Serverless (Lambda) |
 |---------|-------------------|-------------------|---------------|----------------|---------------------|
-| **Authentication** | [AWS IAM (SigV4)](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html) | Amazon Cognito JWT | None (ALB) | SigV4 + Public Health | Amazon Cognito User Pool |
+| **Authentication** | [AWS IAM (SigV4)](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-oauth.html) | Amazon Cognito JWT | None (ALB) | SigV4 + Public Health | Amazon Cognito User Pool |
 | **Configuration** | `.env` file | `.env` file | `.env` file | `.env` file | `.env` file |
 | **Setup Complexity** | Medium | Medium-High | Medium | High | High |
 | **Cost Model** | Pay per runtime hour | Pay per runtime hour | Pay for running containers | Pay for EKS + EC2 instances | Pay per request |
@@ -422,8 +409,8 @@ pip install mcp httpx boto3 python-dotenv botocore
 
 ### Testing Different Authentication Methods
 
-1. **SigV4/IAM** - Best for testing with your AWS credentials
-2. **OAuth** - Best for testing user-based authentication flows
+1. **IAM SigV4** - Best for testing with your AWS credentials
+2. **JWT Bearer Token Authentication** - Best for testing user-based authentication flows
 3. **Serverless** - Best for testing API Gateway integration
 
 ---
@@ -434,7 +421,7 @@ pip install mcp httpx boto3 python-dotenv botocore
 - [Model Context Protocol (MCP) Specification](https://modelcontextprotocol.io/)
 - [MCP Inspector Documentation](https://github.com/modelcontextprotocol/inspector)
 - [Amazon Cognito User Pools](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-identity-pools.html)
-- [AWS Signature Version 4 (SigV4)](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html)
+- [AWS Signature Version 4 (SigV4)](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-oauth.html)
 - [AWS Identity and Access Management (IAM)](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html)
 
 ---
