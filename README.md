@@ -36,18 +36,15 @@ This project demonstrates different AWS deployment patterns for MCP servers:
 ```
 maths/
 ├── deploy-agentcore-iam/          # AgentCore deployment with IAM Sigv4 Authentication
-│   ├── .env                   # Configuration (gitignored)
 │   ├── .env.example           # Template for configuration
 │   ├── infrastructure/        # Deployment scripts
 │   └── src/                   # MCP server implementation
 ├── deploy-agentcore-oauth/    # AgentCore deployment with OAuth
-│   ├── .env                   # Configuration (gitignored)
 │   ├── .env.example           # Template for configuration
 │   ├── infrastructure/        # Deployment scripts with OAuth config
 │   ├── get-access-token.py    # Script to get Cognito access tokens
 │   └── src/                   # MCP server implementation
 ├── deploy-ecs/                # ECS container deployment
-│   ├── .env                   # Configuration (gitignored)
 │   ├── .env.example           # Template for configuration
 │   ├── infrastructure/        # CloudFormation templates
 │   └── src/                   # MCP server implementation
@@ -57,7 +54,6 @@ maths/
 │   ├── k8s/                   # Kubernetes manifests
 │   └── src/                   # MCP server implementation
 ├── deploy-serverless/         # Serverless Lambda deployment
-│   ├── .env                   # Configuration (gitignored)
 │   ├── .env.example           # Template for configuration
 │   ├── infrastructure/        # CloudFormation + deployment scripts
 │   └── src/                   # Lambda function + MCP server
@@ -71,27 +67,23 @@ maths/
 
 ## Configuration Management
 
-**All deployments use `.env` files - NO hardcoded credentials.**
-
 ### Setting Up Configuration
-
-Each deployment folder has `.env.example` templates:
 
 ```bash
 # For AgentCore with SigV4/IAM
 cd deploy-agentcore
 cp .env.example .env
-# Edit .env with your configuration
+# Create .env with your configuration
 
 # For AgentCore with OAuth
 cd deploy-agentcore-oauth
 cp .env.example .env
-# Edit .env with your configuration
+# Create .env with your configuration
 
 # For Serverless
 cd deploy-serverless
 cp .env.example .env
-# Edit .env with your configuration
+# Create .env with your configuration
 ```
 
 ---
@@ -115,7 +107,7 @@ COGNITO_CLIENT_ID=your-client-id
 COGNITO_CLIENT_SECRET=your-client-secret
 COGNITO_REGION=your-region
 COGNITO_USERNAME=your-email@example.com
-COGNITO_PASSWORD=YourSecurePassword123!
+COGNITO_PASSWORD=YourSecurePassword
 ```
 
 **Deploy:**
@@ -157,7 +149,7 @@ COGNITO_CLIENT_ID=your-client-id
 COGNITO_CLIENT_SECRET=your-client-secret
 COGNITO_REGION=your-region
 COGNITO_USERNAME=your-email@example.com
-COGNITO_PASSWORD=YourSecurePassword123!
+COGNITO_PASSWORD=YourSecurePassword
 ```
 
 **Deploy:**
