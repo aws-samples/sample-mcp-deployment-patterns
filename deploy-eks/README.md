@@ -49,7 +49,14 @@ NAMESPACE=mcp-server
 IMAGE_NAME=maths-mcp-server
 ECR_REPOSITORY=maths-mcp-server
 REPLICAS=2
+ACM_CERTIFICATE_ARN=arn:aws:acm:REGION:ACCOUNT_ID:certificate/CERTIFICATE_ID
+INTERNAL_ALB_SERVER_NAME=mcp.internal.example.com
 ```
+
+The certificate must cover `INTERNAL_ALB_SERVER_NAME`. API Gateway uses this
+name for TLS verification when connecting through the VPC Link. If clients
+inside the VPC need direct ALB access, create a private DNS alias from this name
+to the AWS-generated ALB hostname printed by the workload deployment script.
 
 ### 2. Step-by-Step Deployment
 
@@ -87,7 +94,7 @@ Deploys:
 - Creates Kubernetes namespace
 - Deploys MCP server pods
 - Creates services and ingress
-- Sets up internal ALB (private access only)
+- Sets up an HTTPS-only internal ALB (private access only)
 
 **Duration**: ~10-15 minutes
 

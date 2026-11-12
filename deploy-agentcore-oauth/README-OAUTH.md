@@ -39,14 +39,16 @@ cd ..
 ./get-access-token.py
 ```
 
-This will output an ACCESS token that you can use for testing.
+This writes the access token to `.agentcore-access-token` with owner-only
+permissions. Load it only into the process that needs it and delete the file
+when testing is complete.
 
 ### 3. Test with Token
 
 ```bash
 agentcore invoke '{"method": "tools/list", "jsonrpc": "2.0", "id": 1}' \
   --agent maths_mcp_agentcore_oauth \
-  --bearer-token YOUR_ACCESS_TOKEN
+  --bearer-token "$(< .agentcore-access-token)"
 ```
 
 ## Configuration

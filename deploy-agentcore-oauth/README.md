@@ -366,9 +366,9 @@ http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=...
    Response: {"result": 5.0}
    ```
 
-### Method 2: Direct Token Generation (Manual Testing)
+### Method 2: Secure Token Generation (Manual Testing)
 
-If you need to manually inspect tokens:
+If you need to obtain a token for another local tool:
 
 ```bash
 cd deploy-agentcore-oauth
@@ -383,28 +383,14 @@ python3 get-access-token.py
 
 **Output:**
 ```
-Authenticating...
-✓ Successfully authenticated!
-
-================================================================================
-ACCESS TOKEN (use this for AgentCore):
-eyJraWQiOiJqOGlGdjh6eHRSdUM1c0FsRnlFd0NWS2VxdGRlcDZKaFYy...
-================================================================================
-
-Access Token Payload:
-{
-  "sub": "999e9428-a021-70dc-7a98-7b8084f76f4a",
-  "client_id": "your-client-id",
-  "token_use": "access",
-  "scope": "aws.cognito.signin.user.admin",
-  "auth_time": 1760621310,
-  "exp": 1760624910,
-  "iat": 1760621310
-}
-
-✓ client_id: YES
-✓ aud: NO (optional)
+Authentication succeeded.
+client_id claim present: True
+aud claim present: False
+expiration claim present: True
+Access token written to owner-only file: .../.agentcore-access-token
 ```
+
+The script deliberately does not print the token or decoded identity claims.
 
 ### Understanding the Proxy Architecture
 
@@ -542,13 +528,13 @@ HTTP 403: {"message": "Forbidden"}
 
 **Debug Steps:**
 ```bash
-# 1. Check token expiration
-python3 get-access-token.py | jq -R 'split(".") | .[1] | @base64d | fromjson | .exp'
+# Generate a fresh owner-only token file.
+python3 get-access-token.py
 
-# 2. Verify current timestamp
-date +%s
-
-# 3. If exp < current time, token is expired
+# Use it without printing it.
+agentcore invoke '{"method":"tools/list","jsonrpc":"2.0","id":1}' \
+  --agent maths_mcp_agentcore_oauth \
+  --bearer-token "$(< .agentcore-access-token)"
 ```
 
 ### Issue 2: Empty Tools List in MCP Inspector
@@ -743,7 +729,7 @@ deploy-agentcore-oauth/
 ├── README.md                      # This comprehensive guide
 ├── .gitignore                     # Git ignore patterns
 ├── pyproject.toml                 # Python dependencies
-├── get-access-token.py            # Manual token generator (verbose)
+├── get-access-token.py            # Secure owner-only token generator
 ├── .bedrock_agentcore.yaml        # AgentCore config (auto-generated)
 │
 ├── src/

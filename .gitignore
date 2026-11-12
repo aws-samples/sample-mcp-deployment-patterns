@@ -36,6 +36,7 @@ cdk.out/
 # Credentials and secrets
 *credentials*
 *secret*
+*.access-token
 *.pem
 *.key
 

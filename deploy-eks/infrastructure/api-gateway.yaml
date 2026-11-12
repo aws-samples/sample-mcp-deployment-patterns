@@ -1,5 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'API Gateway with VPC Link for MCP Server'
+Description: 'API Gateway with an authenticated VPC Link and TLS-verified private ALB integration for the MCP Server'
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
 
 Parameters:
   VpcId:
@@ -7,13 +11,14 @@ Parameters:
     Description: VPC ID where the ALB is located
     Default: vpc-0830458aef82a7347
   
-  PrivateALBArn:
-    Type: String
-    Description: ARN of the private ALB to connect to
-  
   PrivateALBListenerArn:
     Type: String
     Description: ARN of the private ALB listener
+
+  PrivateALBServerName:
+    Type: String
+    Description: DNS name covered by the private ALB certificate for TLS verification
+    AllowedPattern: '^(?=.{1,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$'
   
   PrivateSubnet1Id:
     Type: String
@@ -51,15 +56,10 @@ Resources:
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 10.0.0.0/8
-          Description: Allow HTTP to private subnets
-        - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: 10.0.0.0/8
-          Description: Allow HTTPS to private subnets
+          Description: Allow HTTPS to the private ALB
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-vpc-link-sg'
@@ -118,6 +118,8 @@ Resources:
       ConnectionType: VPC_LINK
       ConnectionId: !Ref VPCLink
       PayloadFormatVersion: '1.0'
+      TlsConfig:
+        ServerNameToVerify: !Ref PrivateALBServerName
 
   # Health check route (no authentication for monitoring)
   HealthRoute:

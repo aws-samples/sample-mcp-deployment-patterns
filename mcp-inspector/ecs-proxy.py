@@ -5,6 +5,8 @@ Connects to API Gateway endpoint with Cognito JWT token
 """
 
 import asyncio
+import base64
+import hashlib
 import os
 import sys
 import secrets
@@ -25,7 +27,6 @@ load_dotenv('../deploy-ecs/.env')
 # Configuration
 API_GATEWAY_URL = os.getenv('API_GATEWAY_URL')
 COGNITO_CLIENT_ID = os.getenv('COGNITO_CLIENT_ID')
-COGNITO_CLIENT_SECRET = os.getenv('COGNITO_CLIENT_SECRET')
 COGNITO_REGION = os.getenv('COGNITO_REGION', 'us-west-2')
 STACK_NAME = os.getenv('STACK_NAME', 'maths-mcp-ecs')
 
@@ -41,7 +42,23 @@ class CallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_url = urllib.parse.urlparse(self.path)
         query_params = urllib.parse.parse_qs(parsed_url.query)
-        
+
+        returned_state = query_params.get('state', [''])[0]
+        if not returned_state or not secrets.compare_digest(
+            returned_state,
+            self.server.expected_state,
+        ):
+            self.server.auth_error = 'OAuth state validation failed'
+            self.server.auth_event.set()
+            self.send_response(400)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(
+                b'<html><body><h2>Authorization Failed</h2>'
+                b'<p>State validation failed.</p></body></html>'
+            )
+            return
+
         if 'code' in query_params:
             self.server.auth_code = query_params['code'][0]
             self.server.auth_event.set()
@@ -50,7 +67,10 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'<html><body><h2>Success! You can close this window.</h2></body></html>')
         else:
+            self.server.auth_error = 'Authorization provider returned an error'
+            self.server.auth_event.set()
             self.send_response(400)
+            self.send_header('Content-type', 'text/html')
             self.end_headers()
     
     def log_message(self, format, *args):
@@ -62,30 +82,37 @@ def get_jwt_token_oauth():
         print("🔐 Starting OAuth 2.0 flow...", file=sys.stderr)
         
         state = secrets.token_urlsafe(32)
-        
-        # Build authorization URL (no PKCE)
+        code_verifier = secrets.token_urlsafe(64)
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode('ascii')).digest()
+        ).rstrip(b'=').decode('ascii')
+
         auth_params = {
             'response_type': 'code',
             'client_id': COGNITO_CLIENT_ID,
             'redirect_uri': REDIRECT_URI,
             'scope': 'openid email profile',
-            'state': state
+            'state': state,
+            'code_challenge': code_challenge,
+            'code_challenge_method': 'S256',
         }
         
         auth_url = f"{AUTHORIZE_URL}?" + urllib.parse.urlencode(auth_params)
         
-        print(f"🌐 Opening browser for authentication...", file=sys.stderr)
-        webbrowser.open(auth_url)
-        
         # Start callback server
         server = HTTPServer(('localhost', 8080), CallbackHandler)
         server.auth_code = None
+        server.auth_error = None
+        server.expected_state = state
         server.auth_event = Event()
         
         server_thread = Thread(target=server.serve_forever)
         server_thread.daemon = True
         server_thread.start()
-        
+
+        print("🌐 Opening browser for authentication...", file=sys.stderr)
+        webbrowser.open(auth_url)
+
         print("⏳ Waiting for authentication callback...", file=sys.stderr)
         
         # Wait for authorization code with timeout
@@ -95,19 +122,23 @@ def get_jwt_token_oauth():
             return None
         
         server.shutdown()
-        
+
+        if server.auth_error:
+            print(f"❌ {server.auth_error}", file=sys.stderr)
+            return None
+        if not server.auth_code:
+            print("❌ Authorization callback did not contain a code", file=sys.stderr)
+            return None
+
         print("✅ Authorization code received, exchanging for tokens...", file=sys.stderr)
-        
-        # Exchange code for tokens (no PKCE)
+
         token_data = {
             'grant_type': 'authorization_code',
             'client_id': COGNITO_CLIENT_ID,
             'code': server.auth_code,
-            'redirect_uri': REDIRECT_URI
+            'redirect_uri': REDIRECT_URI,
+            'code_verifier': code_verifier,
         }
-        
-        if COGNITO_CLIENT_SECRET:
-            token_data['client_secret'] = COGNITO_CLIENT_SECRET
         
         response = requests.post(
             TOKEN_URL,
@@ -117,7 +148,7 @@ def get_jwt_token_oauth():
         )
         
         if response.status_code != 200:
-            print(f"❌ Token exchange failed: {response.text}", file=sys.stderr)
+            print(f"❌ Token exchange failed with HTTP {response.status_code}", file=sys.stderr)
             return None
         
         tokens = response.json()
@@ -136,7 +167,7 @@ if not JWT_TOKEN:
     sys.exit(1)
 
 print(f"🚀 ECS MCP Proxy - {API_GATEWAY_URL}/mcp", file=sys.stderr)
-print(f"✅ JWT token obtained: {JWT_TOKEN[:50]}...", file=sys.stderr)
+print("✅ JWT token obtained", file=sys.stderr)
 
 server = Server("ecs-mcp-proxy")
 

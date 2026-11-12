@@ -172,7 +172,7 @@ cd deploy-agentcore-oauth/infrastructure
 ```bash
 cd deploy-agentcore-oauth
 python3 get-access-token.py
-# Copy the ACCESS TOKEN from output
+export BEARER_TOKEN="$(< .agentcore-access-token)"
 ```
 
 **Test with MCP Inspector:**
@@ -258,6 +258,8 @@ CONTAINER_PORT=8000
 # Load Balancer Configuration
 ALB_NAME=maths-mcp-alb
 TARGET_GROUP_NAME=maths-mcp-targets
+CERTIFICATE_ARN=arn:aws:acm:REGION:ACCOUNT_ID:certificate/CERTIFICATE_ID
+INTERNAL_ALB_SERVER_NAME=mcp.internal.example.com
 ```
 
 **Deploy:**
@@ -274,13 +276,9 @@ cd deploy-ecs/infrastructure
 
 **Test:**
 ```bash
-# Health check
-curl http://YOUR_ALB_URL/health
-
-# MCP endpoint
-curl -X POST http://YOUR_ALB_URL/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"method":"tools/list","id":1}'
+# Run the browser-based OAuth flow through API Gateway.
+cd deploy-ecs
+python3 test-oauth-flow.py
 ```
 
 ---
@@ -305,6 +303,8 @@ NAMESPACE=mcp-server
 IMAGE_NAME=maths-mcp-server
 ECR_REPOSITORY=maths-mcp-server
 REPLICAS=2
+ACM_CERTIFICATE_ARN=arn:aws:acm:REGION:ACCOUNT_ID:certificate/CERTIFICATE_ID
+INTERNAL_ALB_SERVER_NAME=mcp.internal.example.com
 
 # Auto-configured by deployment scripts
 VPC_ID=
@@ -366,7 +366,7 @@ pip install mcp httpx boto3 python-dotenv botocore
 |------------|---------|-------------|--------------|
 | **AgentCore [SigV4](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html)** | `npx @modelcontextprotocol/inspector python3 agentcore-proxy-sigv4.py` | AWS IAM | No |
 | **AgentCore OAuth** | `npx @modelcontextprotocol/inspector ./02-start-oauth-proxy.sh agentcore-proxy-oauth.py` | Amazon Cognito JWT | Access Token |
-| **ECS Container** | `curl http://ALB_URL/health` | None | No |
+| **ECS Container** | `cd deploy-ecs && python3 test-oauth-flow.py` | Amazon Cognito JWT | Managed automatically |
 | **EKS Kubernetes** | `cd mcp-inspector && ./05-start-eks-proxy.sh` | AWS SigV4 | No |
 | **Serverless** | `npx @modelcontextprotocol/inspector ./03-start-lambda-proxy.sh` | Amazon Cognito | ID Token |
 

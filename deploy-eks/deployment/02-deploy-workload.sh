@@ -25,6 +25,12 @@ echo "   Image: $IMAGE_NAME"
 echo "   Replicas: $REPLICAS"
 echo ""
 
+if [ -z "$ACM_CERTIFICATE_ARN" ] || [ -z "$INTERNAL_ALB_SERVER_NAME" ]; then
+    echo "Error: ACM_CERTIFICATE_ARN and INTERNAL_ALB_SERVER_NAME must be set in ../.env"
+    echo "The certificate must cover INTERNAL_ALB_SERVER_NAME."
+    exit 1
+fi
+
 # Check if EKS cluster exists
 echo "🔍 Checking EKS cluster..."
 if ! aws eks describe-cluster --name $CLUSTER_NAME --region $REGION >/dev/null 2>&1; then
@@ -96,7 +102,7 @@ sed "s|PLACEHOLDER_IMAGE_URI|$ECR_URI_DIGEST|g" ../k8s/deployment.yaml | kubectl
 
 # Apply service and ingress
 kubectl apply -f ../k8s/service.yaml
-kubectl apply -f ../k8s/ingress.yaml
+sed "s|PLACEHOLDER_CERTIFICATE_ARN|$ACM_CERTIFICATE_ARN|g" ../k8s/ingress.yaml | kubectl apply -f -
 
 # Wait for deployment to be ready
 echo "⏳ Waiting for deployment to be ready..."
@@ -110,11 +116,12 @@ kubectl get pods -n $NAMESPACE
 echo "🌐 Getting Internal ALB URL..."
 sleep 30  # Wait for ALB to be created
 
-# Get internal ALB URL
-INTERNAL_ALB_URL=$(kubectl get ingress maths-mcp-server-internal -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
-if [ -n "$INTERNAL_ALB_URL" ]; then
-    INTERNAL_ALB_URL="http://$INTERNAL_ALB_URL"
+# Get the AWS-generated ALB name and retain the certificate hostname as the URL.
+INTERNAL_ALB_DNS=$(kubectl get ingress maths-mcp-server-internal -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+if [ -n "$INTERNAL_ALB_DNS" ]; then
+    INTERNAL_ALB_URL="https://$INTERNAL_ALB_SERVER_NAME"
     echo "🔒 Internal ALB URL: $INTERNAL_ALB_URL"
+    echo "🔗 Configure private DNS: $INTERNAL_ALB_SERVER_NAME -> $INTERNAL_ALB_DNS"
     
     # Update .env file
     if grep -q "INTERNAL_ALB_URL=" ../.env; then

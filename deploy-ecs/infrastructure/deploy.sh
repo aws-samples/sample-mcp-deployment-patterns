@@ -51,6 +51,12 @@ MEMORY=${MEMORY:-512}
 USER_POOL_NAME=${USER_POOL_NAME:-maths-mcp-users}
 APP_CLIENT_NAME=${APP_CLIENT_NAME:-maths-mcp-client}
 
+if [ -z "$CERTIFICATE_ARN" ] || [ -z "$INTERNAL_ALB_SERVER_NAME" ]; then
+    print_error "CERTIFICATE_ARN and INTERNAL_ALB_SERVER_NAME must be set in ../.env"
+    print_error "The ACM certificate must cover INTERNAL_ALB_SERVER_NAME."
+    exit 1
+fi
+
 print_status "Deployment Configuration:"
 echo "  Stack Name: $STACK_NAME"
 echo "  Region: $REGION"
@@ -131,7 +137,8 @@ if aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION 
             ParameterKey=Memory,ParameterValue=$MEMORY \
             ParameterKey=UserPoolName,ParameterValue=$USER_POOL_NAME \
             ParameterKey=AppClientName,ParameterValue=$APP_CLIENT_NAME \
-            ParameterKey=CertificateArn,ParameterValue="${CERTIFICATE_ARN:-}"
+            ParameterKey=CertificateArn,ParameterValue="$CERTIFICATE_ARN" \
+            ParameterKey=InternalAlbServerName,ParameterValue="$INTERNAL_ALB_SERVER_NAME"
 else
     print_status "Stack does not exist, creating..."
     aws cloudformation create-stack \
@@ -153,7 +160,8 @@ else
             ParameterKey=Memory,ParameterValue=$MEMORY \
             ParameterKey=UserPoolName,ParameterValue=$USER_POOL_NAME \
             ParameterKey=AppClientName,ParameterValue=$APP_CLIENT_NAME \
-            ParameterKey=CertificateArn,ParameterValue="${CERTIFICATE_ARN:-}"
+            ParameterKey=CertificateArn,ParameterValue="$CERTIFICATE_ARN" \
+            ParameterKey=InternalAlbServerName,ParameterValue="$INTERNAL_ALB_SERVER_NAME"
 fi
 
 print_status "CloudFormation deployment initiated. Stack will remain in failed state if errors occur (rollback disabled)."
@@ -172,7 +180,7 @@ print_status "Retrieving deployment information..."
 ALB_URL=$(aws cloudformation describe-stacks \
     --stack-name $STACK_NAME \
     --region $REGION \
-    --query 'Stacks[0].Outputs[?OutputKey==`ALBUrl`].OutputValue' \
+    --query 'Stacks[0].Outputs[?OutputKey==`InternalALBUrl`].OutputValue' \
     --output text)
 
 API_GATEWAY_URL=$(aws cloudformation describe-stacks \
@@ -193,17 +201,6 @@ USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`CognitoClientId`].OutputValue' \
     --output text)
 
-# Get Cognito Client Secret
-if [ -n "$USER_POOL_ID" ] && [ -n "$USER_POOL_CLIENT_ID" ]; then
-    print_status "Retrieving Cognito client secret..."
-    CLIENT_SECRET=$(aws cognito-idp describe-user-pool-client \
-        --user-pool-id $USER_POOL_ID \
-        --client-id $USER_POOL_CLIENT_ID \
-        --region $REGION \
-        --query 'UserPoolClient.ClientSecret' \
-        --output text)
-fi
-
 print_success "Deployment completed successfully!"
 echo ""
 echo "=== Deployment Information ==="
@@ -211,7 +208,6 @@ echo "🌐 API Gateway URL (Public + JWT Auth): $API_GATEWAY_URL"
 echo "🔒 Internal ALB URL (Private + No Auth): $ALB_URL"
 echo "👤 Cognito User Pool ID: $USER_POOL_ID"
 echo "🔑 Cognito Client ID: $USER_POOL_CLIENT_ID"
-echo "🔐 Cognito Client Secret: ${CLIENT_SECRET:0:20}..."
 echo "📦 ECR Repository: $ECR_URI"
 echo ""
 echo "=== Architecture Flow ==="
@@ -241,14 +237,6 @@ if [ -n "$USER_POOL_CLIENT_ID" ]; then
         sed -i.bak "s|COGNITO_CLIENT_ID=.*|COGNITO_CLIENT_ID=$USER_POOL_CLIENT_ID|" .env
     else
         echo "COGNITO_CLIENT_ID=$USER_POOL_CLIENT_ID" >> .env
-    fi
-fi
-
-if [ -n "$CLIENT_SECRET" ]; then
-    if grep -q "COGNITO_CLIENT_SECRET=" .env; then
-        sed -i.bak "s|COGNITO_CLIENT_SECRET=.*|COGNITO_CLIENT_SECRET=$CLIENT_SECRET|" .env
-    else
-        echo "COGNITO_CLIENT_SECRET=$CLIENT_SECRET" >> .env
     fi
 fi
 

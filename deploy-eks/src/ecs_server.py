@@ -155,7 +155,8 @@ def main():
     """Main entry point"""
     port = int(os.getenv('PORT', 8000))
     
-    server = HTTPServer(('0.0.0.0', port), MCPHandler)
+    # The pod is reached through a ClusterIP service and an internal ALB.
+    server = HTTPServer(('0.0.0.0', port), MCPHandler)  # nosec B104
     
     logger.info(f"Starting ECS MCP Server on port {port}")
     logger.info(f"Health check: http://0.0.0.0:{port}/")

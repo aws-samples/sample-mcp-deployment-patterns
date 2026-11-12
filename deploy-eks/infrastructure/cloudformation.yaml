@@ -1,5 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "Simple EKS cluster with managed node groups - production ready"
+Description: "EKS cluster with managed nodes - private-first networking, control-plane logging, and KMS secrets encryption"
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
 
 Parameters:
   ClusterName:
@@ -274,6 +278,35 @@ Resources:
         - Key: Name
           Value: !Sub "${ClusterName}-nodegroup-role"
 
+  # Retained customer-managed key provides an auditable encryption boundary for
+  # Kubernetes secrets even on EKS versions that enable default envelope encryption.
+  EKSSecretsKmsKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub "Kubernetes secrets encryption for ${ClusterName}"
+      EnableKeyRotation: true
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnableAccountAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ClusterName}-secrets-key"
+
+  EKSSecretsKmsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${ClusterName}/secrets"
+      TargetKeyId: !Ref EKSSecretsKmsKey
+
   # EKS Cluster
   EKSCluster:
     Type: AWS::EKS::Cluster
@@ -281,6 +314,11 @@ Resources:
       Name: !Ref ClusterName
       Version: !Ref KubernetesVersion
       RoleArn: !GetAtt EKSClusterRole.Arn
+      EncryptionConfig:
+        - Provider:
+            KeyArn: !GetAtt EKSSecretsKmsKey.Arn
+          Resources:
+            - secrets
       ResourcesVpcConfig:
         SecurityGroupIds:
           - !Ref ControlPlaneSecurityGroup
@@ -313,7 +351,6 @@ Resources:
   # EKS Managed Node Group
   EKSNodeGroup:
     Type: AWS::EKS::Nodegroup
-    DependsOn: EKSCluster
     Properties:
       ClusterName: !Ref EKSCluster
       NodegroupName: !Sub "${ClusterName}-nodegroup"

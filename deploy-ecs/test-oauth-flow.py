@@ -9,10 +9,13 @@ This script demonstrates the complete OAuth flow:
 4. Use JWT token to call API Gateway endpoint
 """
 
-import os
+import base64
+import hashlib
+import html
 import json
-
+import os
 import secrets
+import sys
 import urllib.parse
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -31,7 +34,23 @@ class CallbackHandler(BaseHTTPRequestHandler):
         # Parse the callback URL
         parsed_url = urllib.parse.urlparse(self.path)
         query_params = urllib.parse.parse_qs(parsed_url.query)
-        
+
+        returned_state = query_params.get('state', [''])[0]
+        if not returned_state or not secrets.compare_digest(
+            returned_state,
+            self.server.expected_state,
+        ):
+            self.server.auth_error = 'OAuth state validation failed'
+            self.server.callback_event.set()
+            self.send_response(400)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(
+                b'<html><body><h2>Authorization Failed</h2>'
+                b'<p>State validation failed. Return to the terminal.</p></body></html>'
+            )
+            return
+
         if 'code' in query_params:
             # Store the authorization code
             self.server.auth_code = query_params['code'][0]
@@ -50,19 +69,18 @@ class CallbackHandler(BaseHTTPRequestHandler):
                 </html>
             ''')
         else:
-            # Handle error
+            # Keep the provider error for terminal diagnostics, but never reflect
+            # untrusted query text into the browser response.
             error = query_params.get('error', ['Unknown error'])[0]
+            self.server.auth_error = html.escape(error, quote=True)
+            self.server.callback_event.set()
             self.send_response(400)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
-            self.wfile.write(f'''
-                <html>
-                <body>
-                    <h2>Authorization Failed!</h2>
-                    <p>Error: {error}</p>
-                </body>
-                </html>
-            '''.encode())
+            self.wfile.write(
+                b'<html><body><h2>Authorization Failed</h2>'
+                b'<p>Return to the terminal for details.</p></body></html>'
+            )
     
     def log_message(self, format, *args):
         # Suppress HTTP server logs
@@ -73,7 +91,6 @@ class OAuthTester:
         self.region = os.getenv('COGNITO_REGION', 'us-west-2')
         self.user_pool_id = os.getenv('COGNITO_USER_POOL_ID')
         self.client_id = os.getenv('COGNITO_CLIENT_ID')
-        self.client_secret = os.getenv('COGNITO_CLIENT_SECRET')
         self.api_gateway_url = os.getenv('API_GATEWAY_URL')
         self.stack_name = os.getenv('STACK_NAME', 'maths-mcp-ecs')
         
@@ -99,43 +116,48 @@ class OAuthTester:
         """Step 1: Generate authorization URL and open browser"""
         print("🚀 Step 1: Starting OAuth Authorization Flow")
         
-        # Generate state parameter for security
+        # PKCE protects the authorization code for this public local client.
         state = secrets.token_urlsafe(32)
-        
-        # Build authorization URL (no PKCE)
+        code_verifier = secrets.token_urlsafe(64)
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode('ascii')).digest()
+        ).rstrip(b'=').decode('ascii')
+
         auth_params = {
             'response_type': 'code',
             'client_id': self.client_id,
             'redirect_uri': self.redirect_uri,
             'scope': 'openid email profile',
-            'state': state
+            'state': state,
+            'code_challenge': code_challenge,
+            'code_challenge_method': 'S256',
         }
         
         auth_url = f"{self.authorize_url}?" + urllib.parse.urlencode(auth_params)
         
         print(f"📋 Authorization URL: {auth_url}")
         print()
-        print("🌐 Opening browser for authorization...")
-        
-        # Open browser
-        webbrowser.open(auth_url)
-        
-        return state
+        return state, code_verifier, auth_url
 
-    def wait_for_callback(self):
+    def wait_for_callback(self, expected_state, auth_url):
         """Step 2: Start callback server and wait for authorization code"""
         print(f"⏳ Step 2: Waiting for callback on http://localhost:{self.callback_port}/callback")
         
         # Start HTTP server for callback
         server = HTTPServer(('localhost', self.callback_port), CallbackHandler)
         server.auth_code = None
+        server.auth_error = None
+        server.expected_state = expected_state
         server.callback_event = Event()
         
         # Start server in background thread
         server_thread = Thread(target=server.serve_forever)
         server_thread.daemon = True
         server_thread.start()
-        
+
+        print("🌐 Opening browser for authorization...")
+        webbrowser.open(auth_url)
+
         # Wait for authorization code with timeout
         timeout = 120  # 2 minutes
         if not server.callback_event.wait(timeout=timeout):
@@ -143,24 +165,25 @@ class OAuthTester:
             raise Exception("Timeout waiting for authorization code")
         
         server.shutdown()
-        print(f"✅ Received authorization code: {server.auth_code[:20]}...")
+        if server.auth_error:
+            raise RuntimeError(f"Authorization failed: {server.auth_error}")
+        if not server.auth_code:
+            raise RuntimeError("Authorization callback did not contain a code")
+
+        print("✅ Authorization code received")
         return server.auth_code
 
-    def exchange_code_for_tokens(self, auth_code):
+    def exchange_code_for_tokens(self, auth_code, code_verifier):
         """Step 3: Exchange authorization code for JWT tokens"""
         print("🔄 Step 3: Exchanging authorization code for tokens")
         
-        # Prepare token request (no PKCE)
         token_data = {
             'grant_type': 'authorization_code',
             'client_id': self.client_id,
             'code': auth_code,
-            'redirect_uri': self.redirect_uri
+            'redirect_uri': self.redirect_uri,
+            'code_verifier': code_verifier,
         }
-        
-        # Add client secret if available
-        if self.client_secret:
-            token_data['client_secret'] = self.client_secret
         
         # Make token request
         response = requests.post(
@@ -169,20 +192,15 @@ class OAuthTester:
             headers={'Content-Type': 'application/x-www-form-urlencoded'},
             timeout=30
         )
-        response.raise_for_status()
-        
         if response.status_code != 200:
             print(f"❌ Token exchange failed: {response.status_code}")
-            print(f"Response: {response.text}")
-            raise Exception(f"Token exchange failed: {response.text}")
+            raise RuntimeError("Token exchange failed")
         
         tokens = response.json()
         
-        print("✅ Successfully obtained tokens:")
-        print(f"   Access Token: {tokens['access_token'][:50]}...")
-        print(f"   ID Token: {tokens['id_token'][:50]}...")
-        print(f"   Token Type: {tokens['token_type']}")
-        print(f"   Expires In: {tokens['expires_in']} seconds")
+        print("✅ Successfully obtained tokens")
+        print(f"   Token Type: {tokens.get('token_type', 'Bearer')}")
+        print(f"   Expires In: {tokens.get('expires_in', 'unknown')} seconds")
         print()
         
         return tokens
@@ -208,14 +226,13 @@ class OAuthTester:
         }
         
         print(f"📡 Making request to: {mcp_url}")
-        print(f"🔑 Using ID token: {tokens['id_token'][:50]}...")
+        print("🔑 Using the ID token returned by Cognito")
         
         try:
             response = requests.post(mcp_url, json=mcp_request, headers=headers, timeout=30)
             response.raise_for_status()
             
             print(f"📊 Response Status: {response.status_code}")
-            print(f"📋 Response Headers: {dict(response.headers)}")
             
             if response.status_code == 200:
                 print("✅ API Gateway request successful!")
@@ -258,13 +275,13 @@ class OAuthTester:
             self.test_health_endpoint()
             
             # Step 1: Start authorization flow
-            state = self.start_authorization_flow()
+            state, code_verifier, auth_url = self.start_authorization_flow()
             
             # Step 2: Wait for callback
-            auth_code = self.wait_for_callback()
+            auth_code = self.wait_for_callback(state, auth_url)
             
             # Step 3: Exchange code for tokens
-            tokens = self.exchange_code_for_tokens(auth_code)
+            tokens = self.exchange_code_for_tokens(auth_code, code_verifier)
             
             # Step 4: Test API Gateway
             self.test_api_gateway(tokens)

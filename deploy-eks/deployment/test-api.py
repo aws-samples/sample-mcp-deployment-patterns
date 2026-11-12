@@ -67,7 +67,7 @@ def main():
             session_token=credentials.token
         )
         
-        print(f"✅ Found AWS credentials for access key: {credentials.access_key[:10]}...")
+        print("✅ AWS credentials loaded successfully")
         
     except Exception as e:
         print(f"❌ Error setting up AWS authentication: {e}")
