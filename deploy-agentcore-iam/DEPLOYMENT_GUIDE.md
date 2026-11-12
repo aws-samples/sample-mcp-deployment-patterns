@@ -124,24 +124,40 @@ mcp-inspector/
    ```
 
 2. **Required AWS Permissions**
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Effect": "Allow",
-         "Action": [
-           "bedrock-agentcore:*",
-           "ecr:*",
-           "iam:CreateRole",
-           "iam:AttachRolePolicy",
-           "codebuild:*"
-         ],
-         "Resource": "*"
-       }
-     ]
-   }
+
+   Use a dedicated deployment role and generate its policy from the operations
+   observed during a deployment. Do not combine IAM role management and
+   service-wide wildcards in a policy with `Resource: "*"`.
+
+   For Python utilities in this sample, IAM Policy Autopilot can generate a
+   deterministic baseline:
+
+   ```bash
+   uvx iam-policy-autopilot@latest generate-policies \
+     "$(pwd)/get-access-token.py" \
+     --region your-region \
+     --service-hints cognito-idp \
+     --pretty
    ```
+
+   The AgentCore deployment itself is performed by the AgentCore CLI rather
+   than direct SDK calls in this repository. Run it first in a sandbox account,
+   then use IAM Access Analyzer policy generation or its CloudTrail activity to
+   create the deployment-role policy. Review the result before attaching it.
+
+   Scope the generated deployment policy as follows:
+
+   - Limit ECR repository actions to the repository used by this sample.
+     `ecr:GetAuthorizationToken` is the exception that requires `Resource: "*"`.
+   - Limit CodeBuild actions to the generated project ARN.
+   - Limit AgentCore actions to this sample's runtime resources wherever the
+     action supports resource-level permissions.
+   - Limit role creation and updates to a dedicated IAM path such as
+     `/sample-mcp/`.
+   - Require a permissions boundary when a deployment role creates another
+     role.
+   - Scope `iam:PassRole` to the exact runtime/build roles and restrict it with
+     `iam:PassedToService`.
 
 3. **Python dependencies**
    ```bash

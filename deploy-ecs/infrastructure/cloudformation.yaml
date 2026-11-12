@@ -1,5 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Maths MCP Server on ECS with ALB and Cognito Authentication'
+Description: 'Maths MCP Server on ECS - authenticates at API Gateway and encrypts private ALB traffic with TLS'
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
 
 Parameters:
   ClusterName:
@@ -45,23 +49,14 @@ Parameters:
     Type: String
     Default: 'maths-mcp-client'
     Description: 'Cognito App Client name'
-  VpcId:
-    Type: String
-    Default: ''
-    Description: 'Existing VPC ID (leave empty to create new VPC)'
-  SubnetIds:
-    Type: CommaDelimitedList
-    Default: ''
-    Description: 'Existing subnet IDs (leave empty to create new subnets)'
   CertificateArn:
     Type: String
-    Default: ''
-    Description: 'ACM Certificate ARN for HTTPS (leave empty to skip Cognito auth)'
-
-Conditions:
-  CreateVPC: !Equals [!Ref VpcId, '']
-  UseExistingVPC: !Not [!Equals [!Ref VpcId, '']]
-  HasCertificate: !Not [!Equals [!Ref CertificateArn, '']]
+    Description: 'ACM certificate ARN for the internal ALB HTTPS listener'
+    AllowedPattern: '^arn:(aws|aws-us-gov|aws-cn):acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f-]+$'
+  InternalAlbServerName:
+    Type: String
+    Description: 'DNS name covered by the ACM certificate; API Gateway uses it for TLS verification'
+    AllowedPattern: '^(?=.{1,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$'
 
 Resources:
   # VPC and Networking
@@ -216,10 +211,10 @@ Resources:
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
+          FromPort: 443
+          ToPort: 443
           CidrIp: 10.0.0.0/16
-          Description: Allow HTTP traffic from VPC for VPC Link connectivity
+          Description: Allow HTTPS traffic from the VPC Link
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -274,7 +269,8 @@ Resources:
     Properties:
       ClientName: !Ref AppClientName
       UserPoolId: !Ref CognitoUserPool
-      GenerateSecret: true
+      # Local browser tools are public clients; PKCE protects the authorization code.
+      GenerateSecret: false
       ExplicitAuthFlows:
         - ADMIN_NO_SRP_AUTH
         - USER_PASSWORD_AUTH
@@ -337,9 +333,8 @@ Resources:
         - Key: Name
           Value: !Sub '${AWS::StackName}-internal-tg'
 
-  # Internal ALB Listener (HTTP is intentional - this ALB is private/internal only,
-  # accessible exclusively via API Gateway VPC Link within the AWS private network.
-  # TLS is enforced at the API Gateway public boundary. Not exposed to the internet.
+  # The private listener terminates TLS so VPC Link traffic is encrypted in transit.
+  # InternalAlbServerName must be covered by CertificateArn for API Gateway validation.
   InternalALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -347,8 +342,11 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref InternalTargetGroup
       LoadBalancerArn: !Ref InternalALB
-      Port: 80
-      Protocol: HTTP
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
 
 
 
@@ -404,6 +402,8 @@ Resources:
       IntegrationUri: !Ref InternalALBListener
       IntegrationMethod: ANY
       PayloadFormatVersion: '1.0'
+      TlsConfig:
+        ServerNameToVerify: !Ref InternalAlbServerName
 
   # JWT Authorizer for Cognito
   CognitoAuthorizer:
@@ -496,8 +496,8 @@ Resources:
         - FARGATE
       Cpu: !Ref Cpu
       Memory: !Ref Memory
-      ExecutionRoleArn: !Ref TaskExecutionRole
-      TaskRoleArn: !Ref TaskRole
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: !Ref ContainerName
           Image: !Ref ImageUri
@@ -582,10 +582,14 @@ Outputs:
       Name: !Sub '${AWS::StackName}-api-url'
 
   InternalALBUrl:
-    Description: 'Internal ALB URL (VPC only)'
-    Value: !Sub 'http://${InternalALB.DNSName}'
+    Description: 'Internal ALB HTTPS URL; the name must resolve privately to the ALB for direct VPC access'
+    Value: !Sub 'https://${InternalAlbServerName}'
     Export:
       Name: !Sub '${AWS::StackName}-internal-alb-url'
+
+  InternalALBDnsName:
+    Description: 'AWS-generated private ALB DNS name for creating a private DNS alias'
+    Value: !GetAtt InternalALB.DNSName
 
   CognitoUserPoolId:
     Description: 'Cognito User Pool ID'

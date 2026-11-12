@@ -1,5 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Maths MCP Server with API Gateway, Lambda, and Cognito Authentication'
+Description: 'Maths MCP Server with API Gateway, Lambda, and Cognito - all backend routes require authenticated access'
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
 
 Parameters:
   DeploymentStage:
@@ -169,18 +173,26 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
-  # Health check endpoint (no auth required)
+  # Health responses are static, but still require Cognito so every API method
+  # follows the same authenticated-access boundary.
   MCPApiRootMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref MCPApiGateway
       ResourceId: !GetAtt MCPApiGateway.RootResourceId
       HttpMethod: GET
-      AuthorizationType: NONE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
       Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MCPLambdaFunction.Arn}/invocations'
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: '{"status": "healthy"}'
+      MethodResponses:
+        - StatusCode: 200
 
   # Lambda permissions
   LambdaApiGatewayPermission:
@@ -189,7 +201,7 @@ Resources:
       FunctionName: !Ref MCPLambdaFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${MCPApiGateway}/*/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${MCPApiGateway}/${DeploymentStage}/POST/mcp'
 
   # API Gateway Deployment
   MCPApiDeployment:

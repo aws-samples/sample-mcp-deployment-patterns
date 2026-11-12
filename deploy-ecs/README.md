@@ -81,7 +81,10 @@ Key environment variables in `.env`:
 - `API_GATEWAY_URL`: API Gateway endpoint
 - `COGNITO_USER_POOL_ID`: Cognito User Pool ID
 - `COGNITO_CLIENT_ID`: Cognito App Client ID
-- `COGNITO_CLIENT_SECRET`: Cognito Client Secret
+
+**Required for private ALB TLS:**
+- `CERTIFICATE_ARN`: ACM certificate for the private ALB listener
+- `INTERNAL_ALB_SERVER_NAME`: Certificate hostname used by API Gateway for TLS verification
 
 **Optional (for automatic user creation):**
 - `COGNITO_USERNAME`: Email for test user (e.g., user@example.com)
@@ -113,7 +116,7 @@ Key environment variables in `.env`:
 - **OAuth**: `GET /authorize` (redirects to Cognito login)
 
 ### Internal ALB (Private - No Auth)
-- **Base URL**: `http://{alb-dns}.{region}.elb.amazonaws.com`
+- **Base URL**: `https://{private-certificate-hostname}`
 - **Health**: `GET /health`
 - **MCP**: `POST /mcp` (direct access, no authentication)
 
@@ -126,7 +129,7 @@ Key environment variables in `.env`:
 1. **Authorization Request**: Client redirects to Cognito authorization URL
 2. **User Login**: User authenticates with Cognito User Pool
 3. **Authorization Code**: Cognito returns authorization code to callback URL
-4. **Token Exchange**: Client exchanges code + client secret for JWT tokens
+4. **Token Exchange**: Client exchanges the code plus its PKCE verifier for JWT tokens
 5. **API Access**: Use ID token in `Authorization: Bearer <token>` header
 
 ### Network Flow
@@ -143,7 +146,6 @@ Client → API Gateway → JWT Authorizer (validates Cognito token)
 ### Automated Configuration
 The deploy script automatically:
 - Deploys CloudFormation stack
-- Retrieves Cognito client secret
 - Updates `.env` with all deployment values
 - **Creates Cognito user if `COGNITO_USERNAME` and `COGNITO_PASSWORD` are provided in `.env`**
 - No manual configuration required

@@ -29,8 +29,8 @@ echo "   VPC ID: $VPC_ID"
 echo ""
 
 # Check if required variables are set
-if [ -z "$VPC_ID" ]; then
-    echo "❌ Error: VPC_ID not found in .env file"
+if [ -z "$VPC_ID" ] || [ -z "$INTERNAL_ALB_SERVER_NAME" ]; then
+    echo "❌ Error: VPC_ID and INTERNAL_ALB_SERVER_NAME must be set in .env"
     echo "💡 Please run ./01-deploy-infrastructure.sh first"
     exit 1
 fi
@@ -102,8 +102,8 @@ aws cloudformation deploy \
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --parameter-overrides \
         VpcId=$VPC_ID \
-        PrivateALBArn=$PRIVATE_ALB_ARN \
         PrivateALBListenerArn=$PRIVATE_ALB_LISTENER_ARN \
+        PrivateALBServerName=$INTERNAL_ALB_SERVER_NAME \
         PrivateSubnet1Id=$PRIVATE_SUBNET_1 \
         PrivateSubnet2Id=$PRIVATE_SUBNET_2 \
         ProjectName=${CLUSTER_NAME} \
